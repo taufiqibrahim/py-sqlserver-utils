@@ -18,8 +18,8 @@ class Test(unittest.TestCase):
         """Tear down test fixtures, if any."""
 
     def test_initialize(self):
-        """Test something."""
-        self.sqlserver = py_sqlserver_utils.Sqlserver(conn_uri=)
+        """Test SQL Server connection."""
+        self.sqlserver = py_sqlserver_utils.Sqlserver(conn_uri=os.getenv('PYSQLSERVERUTILS_CONN_URI'))
 
 if __name__ == "__main__":
     test = Test()
