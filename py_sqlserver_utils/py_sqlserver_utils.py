@@ -1,4 +1,5 @@
 import logging
+import yaml
 from sqlalchemy import create_engine
 from sqlalchemy import types
 from sqlalchemy.engine import reflection
@@ -19,5 +20,25 @@ class Sqlserver(object):
         self.engine = create_engine(conn_uri)
         logging.info('Connected')
 
-    def get_databases(self):
-        pass
+    def parse_stored_procedure_tagging(self):
+        data = list()
+        with self.engine.connect() as con:
+            con.execute('CREATE TABLE #TabParseStoredProcedureTagging (DatabaseName VARCHAR(300), ObjectId VARCHAR(255), ObjectName VARCHAR(300), String_Tagging NVARCHAR(MAX));')
+            con.execute('INSERT INTO #TabParseStoredProcedureTagging EXEC ParseStoredProcedureTagging;')
+            rs = con.execute('SELECT * FROM #TabParseStoredProcedureTagging')
+            for r in rs:
+                print(r[0], r[2])
+                tags_str = r[3]
+                try:
+                    tags = yaml.load(tags_str)
+                except Exception:
+                    print(tags_str)
+                    raise
+
+                data.append({
+                    "database": r[0],
+                    "table_name": r[2],
+                    "tags": tags,
+                })
+
+        return data

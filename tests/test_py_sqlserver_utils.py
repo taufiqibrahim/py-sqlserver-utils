@@ -17,10 +17,14 @@ class Test(unittest.TestCase):
     def tearDown(self):
         """Tear down test fixtures, if any."""
 
-    def test_initialize(self):
+    def test_1_initialize(self):
         """Test SQL Server connection."""
-        self.sqlserver = py_sqlserver_utils.Sqlserver(conn_uri=os.getenv('PYSQLSERVERUTILS_CONN_URI'))
+        sqlserver = py_sqlserver_utils.Sqlserver(conn_uri=os.getenv('PYSQLSERVERUTILS_CONN_URI'))
+
+    def test_2_get_stored_procedure_tagging(self):
+        """Test SQL Server parse stored procedures tagging metadata"""
+        sqlserver = py_sqlserver_utils.Sqlserver(conn_uri=os.getenv('PYSQLSERVERUTILS_CONN_URI'))
+        sqlserver.parse_stored_procedure_tagging()
 
 if __name__ == "__main__":
-    test = Test()
-
+    t = Test()
