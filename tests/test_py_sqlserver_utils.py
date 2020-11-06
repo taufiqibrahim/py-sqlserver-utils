@@ -24,7 +24,8 @@ class Test(unittest.TestCase):
     def test_2_get_stored_procedure_tagging(self):
         """Test SQL Server parse stored procedures tagging metadata"""
         sqlserver = py_sqlserver_utils.Sqlserver(conn_uri=os.getenv('PYSQLSERVERUTILS_CONN_URI'))
-        sqlserver.parse_stored_procedure_tagging()
+        data = sqlserver.parse_stored_procedure_tagging()
+        print(data)
 
 if __name__ == "__main__":
     t = Test()

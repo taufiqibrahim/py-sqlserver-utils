@@ -23,11 +23,16 @@ class Sqlserver(object):
     def parse_stored_procedure_tagging(self):
         data = list()
         with self.engine.connect() as con:
-            con.execute('CREATE TABLE #TabParseStoredProcedureTagging (DatabaseName VARCHAR(300), ObjectId VARCHAR(255), ObjectName VARCHAR(300), String_Tagging NVARCHAR(MAX));')
-            con.execute('INSERT INTO #TabParseStoredProcedureTagging EXEC ParseStoredProcedureTagging;')
-            rs = con.execute('SELECT * FROM #TabParseStoredProcedureTagging')
+            sql = """
+SELECT
+DatabaseName,
+ObjectId,
+ObjectName,
+LTRIM(RTRIM(REPLACE(REPLACE(String_Tagging, '__TAGGINGSTART___',''), '___TAGGINGEND___',''))) AS String_Tagging
+FROM TblStoreProcedureWithTag WHERE String_Tagging IS NOT NULL
+            """
+            rs = con.execute(sql)
             for r in rs:
-                print(r[0], r[2])
                 tags_str = r[3]
                 try:
                     tags = yaml.load(tags_str)
