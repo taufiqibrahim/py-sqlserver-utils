@@ -1,4 +1,5 @@
 import logging
+import os
 import yaml
 from sqlalchemy import create_engine
 from sqlalchemy import types
@@ -25,10 +26,10 @@ class Sqlserver(object):
         with self.engine.connect() as con:
             sql = """
 SELECT
-DatabaseName,
-ObjectId,
-ObjectName,
-LTRIM(RTRIM(REPLACE(REPLACE(String_Tagging, '__TAGGINGSTART___',''), '___TAGGINGEND___',''))) AS String_Tagging
+    DatabaseName,
+    ObjectId,
+    ObjectName,
+    LTRIM(RTRIM(REPLACE(REPLACE(String_Tagging, '#___TAGGINGSTART___#',''), '#___TAGGINGEND__',''))) AS String_Tagging
 FROM TblStoreProcedureWithTag WHERE String_Tagging IS NOT NULL
             """
             rs = con.execute(sql)
@@ -36,14 +37,13 @@ FROM TblStoreProcedureWithTag WHERE String_Tagging IS NOT NULL
                 tags_str = r[3]
                 try:
                     tags = yaml.load(tags_str)
-                except Exception:
-                    print(tags_str)
-                    raise
-
-                data.append({
-                    "database": r[0],
-                    "table_name": r[2],
-                    "tags": tags,
-                })
+                    data.append({
+                        "database": r[0],
+                        "table_name": r[2],
+                        "tags": tags,
+                    })
+                except Exception as e:
+                    logging.error(f"Got error while parsing {r[0]}.{r[2]}")
+                    logging.error(str(e))
 
         return data

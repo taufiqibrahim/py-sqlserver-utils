@@ -4,6 +4,7 @@
 
 import os
 import unittest
+import pprint
 
 from py_sqlserver_utils import py_sqlserver_utils
 
@@ -25,7 +26,7 @@ class Test(unittest.TestCase):
         """Test SQL Server parse stored procedures tagging metadata"""
         sqlserver = py_sqlserver_utils.Sqlserver(conn_uri=os.getenv('PYSQLSERVERUTILS_CONN_URI'))
         data = sqlserver.parse_stored_procedure_tagging()
-        print(data)
+        pprint.pprint(data)
 
 if __name__ == "__main__":
     t = Test()

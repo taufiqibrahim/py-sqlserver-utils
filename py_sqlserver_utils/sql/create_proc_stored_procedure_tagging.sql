@@ -1,91 +1,100 @@
 USE [master]
 GO
 
-IF OBJECT_ID('ParseStoredProcedureTagging', 'P') IS NOT NULL
-DROP PROC ParseStoredProcedureTagging
+SET ANSI_NULLS ON
 GO
-
-CREATE PROCEDURE [dbo].[ParseStoredProcedureTagging]
+SET QUOTED_IDENTIFIER ON
+GO
+CREATE PROCEDURE [dbo].[Usp_SyncObjectStoreProcedureWithTag]
 AS
 BEGIN
+	IF OBJECT_ID('tempdb..#SqlModulesFullString') IS NOT NULL DROP TABLE #SqlModulesFullString
+	CREATE TABLE #SqlModulesFullString 
+		(
+			DatabaseName Varchar(300),
+			ObjectId Int, 
+			SchemaName Varchar(20),
+			ObjectName Varchar(500),
+			[Definition] Nvarchar(MAX)
+		);
+	DECLARE @DatabaseName Varchar(300),@Sql nVarchar(MAX) ,@LastSync DateTime,@NewLastSync DateTime
+	SELECT @LastSync=DATEADD(MINUTE,-15,LastSync),@NewLastSync=GETDATE() FROM TblLastSync
+	DECLARE CursorDatabase CURSOR FOR 
+		SELECT name FROM sys.databases WHERE database_id>4 AND name not in ('SSISDB')   AND state_desc='ONLINE' 
+			OPEN CursorDatabase FETCH NEXT
+				FROM CursorDatabase INTO @DatabaseName WHILE @@FETCH_STATUS = 0 BEGIN
+					SELECT @Sql = 'USE [' + @DatabaseName + ']
+									INSERT INTO #SqlModulesFullString
+									select '''+ @DatabaseName +''' AS DatabaseName, a.object_id,SCHEMA_NAME(b.schema_id),OBJECT_NAME(a.object_id),a.definition 
+									from sys.sql_modules a INNER JOIN sys.all_objects b ON a.object_id=b.object_id
+									WHERE (create_date>='''+CONVERT(VARCHAR,@LastSync,121) 
+										+''' OR modify_date>='''+CONVERT(VARCHAR,@LastSync,121)+''')'
+					EXECUTE	sp_executesql @Sql
+				FETCH NEXT
+					FROM CursorDatabase INTO @DatabaseName 
+				END 
+			CLOSE CursorDatabase DEALLOCATE CursorDatabase ;
+		UPDATE TblLastSync SET LastSync=@NewLastSync;
+		WITH tmp(DatabaseName, ObjectId, SchemaName,ObjectName, DataItem, String) AS
+		  (SELECT DatabaseName,
+				  ObjectId,SchemaName,
+				  ObjectName,
+				  LEFT(LEFT(definition, 700000), CHARINDEX('#___TAGGINGSTART___#', LEFT(definition, 700000) + '#___TAGGINGSTART___#') ),
+				  STUFF(LEFT(definition, 700000), 1, CHARINDEX('#___TAGGINGSTART___#', LEFT(definition, 700000) + '#___TAGGINGSTART___#'), '')
+		   FROM #SqlModulesFullString
+		   UNION ALL SELECT DatabaseName,
+							ObjectId,SchemaName,
+							ObjectName,
+							LEFT(String, CHARINDEX('#___TAGGINGSTART___#', String + '#___TAGGINGSTART___#') ),
+							STUFF(String, 1, CHARINDEX('#___TAGGINGSTART___#', String + '#___TAGGINGSTART___#'), '')
+		   FROM tmp
+		   WHERE String > '' ),
+			 tmp2(DatabaseName, ObjectId,SchemaName, ObjectName, DataItem, String) AS
+		  (SELECT DatabaseName,
+				  ObjectId,SchemaName,
+				  ObjectName,
+				  LEFT(SUBSTRING(definition, 700000, 9000000), CHARINDEX('#___TAGGINGSTART___#', SUBSTRING(definition, 700000, 9000000) + '#___TAGGINGSTART___#') ),
+				  STUFF(SUBSTRING(definition, 700000, 9000000), 1, CHARINDEX('#___TAGGINGSTART___#', SUBSTRING(definition, 700000, 9000000) + '#___TAGGINGSTART___#'), '')
+		   FROM #SqlModulesFullString
+		   UNION ALL SELECT DatabaseName,
+							ObjectId,SchemaName,
+							ObjectName,
+							LEFT(String, CHARINDEX('#___TAGGINGSTART___#', String + '#___TAGGINGSTART___#') ),
+							STUFF(String, 1, CHARINDEX('#___TAGGINGSTART___#', String + '#___TAGGINGSTART___#'), '')
+		   FROM tmp2
+		   WHERE String > '' ),
+			 get_tagging AS
+		  (SELECT DatabaseName,
+				  ObjectId,SchemaName,
+				  ObjectName,
+				  String_Tagging = CASE
+									   WHEN DataItem like '%#___TAGGINGEND___#%' THEN CONCAT('#',LEFT(DataItem, CHARINDEX('#___TAGGINGEND___#', DataItem)+15))
+									   ELSE NULL
+								   END
+		   FROM tmp
+		   UNION SELECT DatabaseName,
+						ObjectId,SchemaName,
+						ObjectName,
+						String_Tagging = CASE
+											 WHEN DataItem like '%#___TAGGINGEND___#%' THEN CONCAT('#',LEFT(DataItem, CHARINDEX('#___TAGGINGEND___#', DataItem)+15))
+											 ELSE NULL
+										 END
+		   FROM tmp2)
+	SELECT *,RANK () OVER ( PARTITION BY DatabaseName,ObjectId ORDER BY String_Tagging DESC	) String_TaggingRank 
+		INTO #Tmp_get_tagging FROM get_tagging WHERE ObjectName IS NOT NULL;
 
-IF OBJECT_ID('tempdb..#SqlModulesFullString') IS NOT NULL
-DROP TABLE #SqlModulesFullString
-CREATE TABLE #SqlModulesFullString (DatabaseName Varchar(300), ObjectId Int, ObjectName Varchar(500), [Definition] Nvarchar(MAX));
-DECLARE @DatabaseName Varchar(300), @Sql nVarchar(MAX) DECLARE CursorDatabase
-CURSOR
-FOR
-SELECT name
-FROM sys.databases
-WHERE name NOT IN ('tempdb', 'master')
-  AND state_desc='ONLINE' OPEN CursorDatabase FETCH NEXT
-  FROM CursorDatabase INTO @DatabaseName WHILE @@FETCH_STATUS = 0 BEGIN
-SELECT @Sql = 'USE [' + @DatabaseName + ']
-                    
-                    
-                            INSERT INTO #SqlModulesFullString
-                            select '''
-+ @DatabaseName +
-''' AS DatabaseName, a.object_id,OBJECT_NAME(object_id),a.definition from sys.sql_modules a'
-EXECUTE
-sp_executesql @Sql
-FETCH
-NEXT
-FROM CursorDatabase INTO @DatabaseName END CLOSE CursorDatabase DEALLOCATE CursorDatabase ;
+	DELETE t FROM TblStoreProcedureWithTag t
+		INNER JOIN #Tmp_get_tagging st ON (st.DatabaseName = t.DatabaseName AND st.ObjectId=t.ObjectId)
+		LEFT JOIN #Tmp_get_tagging s ON (s.DatabaseName = t.DatabaseName AND s.ObjectId=t.ObjectId AND s.String_TaggingRank=t.String_TaggingRank)
+		WHERE s.String_TaggingRank IS NULL
 
-WITH
-tmp(DatabaseName, ObjectId, ObjectName, DataItem, String) AS (
-   SELECT DatabaseName,
-          ObjectId,
-          ObjectName,
-          LEFT(left(definition, 700000), CHARINDEX('___TAGGINGSTART___', left(definition, 700000) + '___TAGGINGSTART___') - 1),
-          STUFF(left(definition, 700000), 1, CHARINDEX('___TAGGINGSTART___', left(definition, 700000) + '___TAGGINGSTART___'), '')
-   FROM #SqlModulesFullString
-   WHERE definition LIKE '%TAGGINGSTART%'
-   UNION ALL SELECT DatabaseName,
-                    ObjectId,
-                    ObjectName,
-                    LEFT(String, CHARINDEX('___TAGGINGSTART___', String + '___TAGGINGSTART___') - 1),
-                    STUFF(String, 1, CHARINDEX('___TAGGINGSTART___', String + '___TAGGINGSTART___'), '')
-   FROM tmp
-   WHERE String > ''),
-tmp2(DatabaseName, ObjectId, ObjectName, DataItem, String) AS (
-   SELECT DatabaseName,
-          ObjectId,
-          ObjectName,
-          LEFT(substring(definition, 700000, 9000000), CHARINDEX('___TAGGINGSTART___', substring(definition, 700000, 9000000) + '___TAGGINGSTART___') - 1),
-          STUFF(substring(definition, 700000, 9000000), 1, CHARINDEX('___TAGGINGSTART___', substring(definition, 700000, 9000000) + '___TAGGINGSTART___'), '')
-   FROM #SqlModulesFullString
-   WHERE definition LIKE '%TAGGINGSTART%'
-   UNION ALL SELECT DatabaseName,
-                    ObjectId,
-                    ObjectName,
-                    LEFT(String, CHARINDEX('___TAGGINGSTART___', String + '___TAGGINGSTART___') - 1),
-                    STUFF(String, 1, CHARINDEX('___TAGGINGSTART___', String + '___TAGGINGSTART___'), '')
-   FROM tmp2
-   WHERE String > ''),
-     get_tagging AS
-  (SELECT DatabaseName,
-          ObjectId,
-          ObjectName,
-          String_Tagging = CASE
-                               WHEN DataItem like '%___TAGGINGEND___%' THEN LEFT(DataItem, CHARINDEX('___TAGGINGEND___', DataItem)+15)
-                               ELSE NULL
-                           END
-   FROM tmp
-   UNION SELECT DatabaseName,
-                ObjectId,
-                ObjectName,
-                String_Tagging = CASE
-                                     WHEN DataItem like '%___TAGGINGEND___%' THEN LEFT(DataItem, CHARINDEX('___TAGGINGEND___', DataItem)+15)
-                                     ELSE NULL
-                                 END
-   FROM tmp2)
-SELECT DatabaseName,
-ObjectId,
-ObjectName,
-LTRIM(RTRIM(REPLACE(REPLACE(String_Tagging, '__TAGGINGSTART___',''), '___TAGGINGEND___',''))) AS String_Tagging
-FROM get_tagging
-WHERE String_Tagging IS NOT NULL
-ORDER BY ObjectId;
+	MERGE TblStoreProcedureWithTag t 
+		USING #Tmp_get_tagging s
+	ON (s.DatabaseName = t.DatabaseName AND s.ObjectId=t.ObjectId AND s.String_TaggingRank=t.String_TaggingRank)
+	WHEN MATCHED
+		THEN UPDATE SET 
+			t.String_Tagging = s.String_Tagging, DateModify=GETDATE()
+	WHEN NOT MATCHED BY TARGET 
+		THEN INSERT (DatabaseName,ObjectId,SchemaName,ObjectName,String_TaggingRank,String_Tagging,DateModify)
+			 VALUES (s.DatabaseName,s.ObjectId,s.SchemaName,s.ObjectName,s.String_TaggingRank,s.String_Tagging,GETDATE());
 END
